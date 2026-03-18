@@ -1,4 +1,14 @@
-"""Introspection engine — orchestrates help, man, and completions parsers to build a CLITool."""
+"""Introspection engine — orchestrates help, man, and completions parsers.
+
+This module is the main entry point for CLI introspection. It coordinates
+the three parsers (:mod:`~mclip.introspect.help`, :mod:`~mclip.introspect.man`,
+:mod:`~mclip.introspect.completions`) and merges their results into a single
+:class:`~mclip.schema.CLITool` schema.
+
+The merging strategy prioritizes ``--help`` data as the primary source,
+then enriches with ``man`` page data (richer descriptions) and shell
+completions (precise flag/command structure).
+"""
 
 from __future__ import annotations
 
@@ -11,7 +21,16 @@ from mclip.schema import CLITool, Command, Flag
 
 
 def _get_version(binary: str) -> str | None:
-    """Try to get the tool version via common patterns."""
+    """Attempt to retrieve the version string of a CLI tool.
+
+    Tries common version flags in order: ``--version``, ``-V``,
+    ``version``, ``-v``. Returns the first line of output that
+    looks like a version string.
+
+    :param binary: The binary name to query.
+    :returns: Version string, or ``None`` if undiscoverable.
+    :rtype: str | None
+    """
     import subprocess
 
     for flag in ["--version", "-V", "version", "-v"]:
@@ -28,7 +47,17 @@ def _get_version(binary: str) -> str | None:
 
 
 def _merge_flags(primary: list[Flag], secondary: list[Flag]) -> list[Flag]:
-    """Merge two flag lists, preferring primary entries but adding new ones from secondary."""
+    """Merge two flag lists, preferring primary entries.
+
+    Flags from ``secondary`` are appended if their name is not already
+    present in ``primary``. If a flag exists in both, missing fields
+    (description, short form) are filled from ``secondary``.
+
+    :param primary: The authoritative flag list (e.g. from ``--help``).
+    :param secondary: The supplementary flag list (e.g. from ``man``).
+    :returns: Merged flag list.
+    :rtype: list[Flag]
+    """
     seen = {f.name for f in primary}
     merged = list(primary)
     for flag in secondary:
@@ -50,7 +79,17 @@ def _merge_flags(primary: list[Flag], secondary: list[Flag]) -> list[Flag]:
 
 
 def _merge_commands(primary: list[Command], secondary: list[Command]) -> list[Command]:
-    """Merge command lists, preferring primary but enriching with secondary."""
+    """Merge two command lists, preferring primary entries.
+
+    Commands from ``secondary`` are appended if not already present.
+    Existing commands are enriched with descriptions and flags from
+    ``secondary`` when the primary entry lacks them.
+
+    :param primary: The authoritative command list.
+    :param secondary: The supplementary command list.
+    :returns: Merged command list.
+    :rtype: list[Command]
+    """
     seen = {c.name for c in primary}
     merged = list(primary)
     for cmd in secondary:
@@ -77,22 +116,25 @@ def introspect_cli(
 ) -> CLITool:
     """Perform full introspection of a CLI tool.
 
-    Combines data from --help, man pages, and shell completions into a
-    unified CLITool schema. Sources are merged with --help taking priority,
-    enriched by man pages and completions.
+    Combines data from ``--help``, ``man`` pages, and shell completions
+    into a unified :class:`~mclip.schema.CLITool` schema. Sources are
+    merged with ``--help`` taking priority, enriched by ``man`` pages
+    and completions.
 
-    Args:
-        binary_name: The CLI tool name (must be on PATH).
-        max_depth: Maximum subcommand recursion depth for --help introspection.
-        use_help: Whether to introspect via --help.
-        use_man: Whether to introspect via man pages.
-        use_completions: Whether to introspect via shell completions.
+    :param binary_name: The CLI tool name (must be on ``PATH``).
+    :param max_depth: Maximum subcommand recursion depth for
+        ``--help`` introspection.
+    :param use_help: Whether to introspect via ``--help``.
+    :param use_man: Whether to introspect via ``man`` pages.
+    :param use_completions: Whether to introspect via shell completions.
+    :returns: A fully populated CLI tool schema.
+    :rtype: CLITool
+    :raises FileNotFoundError: If the binary is not found on ``PATH``.
 
-    Returns:
-        A fully populated CLITool schema.
+    Example::
 
-    Raises:
-        FileNotFoundError: If the binary is not found on PATH.
+        tool = introspect_cli("git", max_depth=2)
+        print(f"Found {len(tool.commands)} commands")
     """
     path = shutil.which(binary_name)
     if not path:

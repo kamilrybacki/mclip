@@ -1,7 +1,13 @@
 """Parser for shell completion scripts — extracts structured command/flag info.
 
-Many modern CLIs (cobra, click, clap, etc.) can generate shell completion scripts
-that contain precise information about commands, flags, and their arguments.
+Many modern CLIs can generate shell completion scripts that contain precise,
+machine-readable information about commands, flags, and their arguments.
+This parser supports two major completion styles:
+
+- **Cobra** (Go) — used by ``kubectl``, ``docker``, ``hugo``, etc.
+  Completions contain ``commands=(...)`` arrays and ``flags+=(...)`` statements.
+- **Click** (Python) — used by ``flask``, ``pip``, ``black``, etc.
+  Completions use ``COMPREPLY`` and ``compgen -W`` patterns.
 """
 
 from __future__ import annotations
@@ -13,13 +19,20 @@ from mclip.schema import Command, Flag
 
 
 def get_completion_script(binary: str, timeout: int = 10) -> str | None:
-    """Try to get a bash completion script from the tool.
+    """Try to fetch a bash completion script from a CLI tool.
 
-    Tries common patterns:
-      - <binary> completion bash
-      - <binary> completions bash
-      - <binary> --completion bash
-      - <binary> generate-completion bash
+    Tries common completion generation patterns in order:
+
+    - ``<binary> completion bash``
+    - ``<binary> completions bash``
+    - ``<binary> --completion bash``
+    - ``<binary> generate-completion bash``
+    - ``<binary> shell-completion bash``
+
+    :param binary: The CLI binary name.
+    :param timeout: Maximum time in seconds per attempt.
+    :returns: The completion script content, or ``None`` if unavailable.
+    :rtype: str | None
     """
     patterns = [
         [binary, "completion", "bash"],
@@ -39,13 +52,17 @@ def get_completion_script(binary: str, timeout: int = 10) -> str | None:
 
 
 def parse_cobra_completions(script: str) -> tuple[list[Command], list[Flag]]:
-    """Parse Cobra-style (Go) bash completion scripts.
+    """Parse a Cobra-style (Go) bash completion script.
 
-    Cobra completions contain blocks like:
+    Cobra completions contain structured blocks like::
+
         commands=("get" "describe" "apply" "delete")
-    and flag definitions like:
         flags+=("--output=")
         two_word_flags+=("-o")
+
+    :param script: The raw completion script content.
+    :returns: A tuple of ``(commands, flags)`` extracted from the script.
+    :rtype: tuple[list[Command], list[Flag]]
     """
     commands: list[Command] = []
     flags: list[Flag] = []
@@ -73,7 +90,6 @@ def parse_cobra_completions(script: str) -> tuple[list[Command], list[Flag]]:
     for match in short_pattern.finditer(script):
         short = match.group(1)
         # Try to associate with an existing long flag (heuristic: next long flag)
-        # For now, just record it
         found = False
         for flag in flags:
             if flag.short is None and flag.takes_value:
@@ -87,16 +103,20 @@ def parse_cobra_completions(script: str) -> tuple[list[Command], list[Flag]]:
 
 
 def parse_click_completions(script: str) -> tuple[list[Command], list[Flag]]:
-    """Parse Click-style (Python) bash completion scripts.
+    """Parse a Click-style (Python) bash completion script.
 
-    Click completions use _CLICK_COMPLETE=bash_source pattern and define
-    completion entries with COMPREPLY patterns.
+    Click completions use ``compgen -W`` patterns with space-separated
+    words that include both flags and subcommand names::
+
+        COMPREPLY=($(compgen -W "--flag1 --flag2 subcommand1" ...))
+
+    :param script: The raw completion script content.
+    :returns: A tuple of ``(commands, flags)`` extracted from the script.
+    :rtype: tuple[list[Command], list[Flag]]
     """
     commands: list[Command] = []
     flags: list[Flag] = []
 
-    # Click completions often embed the command list in case statements
-    # case "$cur" in  --*) COMPREPLY=($(compgen -W "--flag1 --flag2" ...))
     flag_words = re.compile(r'compgen\s+-W\s+"([^"]+)"')
     for match in flag_words.finditer(script):
         words = match.group(1).split()
@@ -110,9 +130,15 @@ def parse_click_completions(script: str) -> tuple[list[Command], list[Flag]]:
 
 
 def parse_completions(binary: str) -> tuple[str | None, list[Command], list[Flag]]:
-    """Fetch and parse completion script for a binary.
+    """Fetch and parse the completion script for a binary.
 
-    Returns (raw_script, commands, flags) or (None, [], []) if unavailable.
+    Automatically detects the completion style (Cobra or Click) and
+    delegates to the appropriate parser.
+
+    :param binary: The CLI binary name.
+    :returns: A tuple of ``(raw_script, commands, flags)``.
+        Returns ``(None, [], [])`` if no completion script is available.
+    :rtype: tuple[str | None, list[Command], list[Flag]]
     """
     script = get_completion_script(binary)
     if not script:

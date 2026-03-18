@@ -1,6 +1,16 @@
-"""Parser for --help output of CLI tools.
+"""Parser for ``--help`` output of CLI tools.
 
-Handles common help output patterns from argparse, click, cobra, clap, and similar frameworks.
+Handles common help output patterns from argparse, click, cobra, clap,
+and similar CLI frameworks. This is the primary introspection source
+and produces the most reliable results for the widest range of tools.
+
+The parser extracts:
+
+- **Description** — text before the first section header
+- **Usage line** — the ``usage:`` line
+- **Flags/options** — from ``Options:`` sections or indented flag lines
+- **Subcommand names** — from ``Commands:`` sections or category-based listings
+- **Positional arguments** — from ``Arguments:`` sections
 """
 
 from __future__ import annotations
@@ -12,10 +22,18 @@ from mclip.schema import Argument, Command, Flag
 
 
 def run_help(binary: str, subcommand: list[str] | None = None, timeout: int = 10) -> str | None:
-    """Run `<binary> [subcommand...] --help` (or -h) and return stdout, or None on failure.
+    """Run ``<binary> [subcommand...] --help`` and return the output.
 
-    Tries --help first, then -h as a fallback (some tools like git subcommands
-    use -h for short help while --help opens a man page).
+    Tries ``--help`` first, then ``-h`` as a fallback (some tools like
+    git subcommands use ``-h`` for short help while ``--help`` opens a
+    man page). Output is validated with :func:`_looks_like_help` to skip
+    error messages.
+
+    :param binary: The CLI binary name or path.
+    :param subcommand: Optional subcommand path, e.g. ``["get", "pods"]``.
+    :param timeout: Maximum time in seconds to wait for the process.
+    :returns: The help text, or ``None`` if unavailable.
+    :rtype: str | None
     """
     for flag in ["--help", "-h"]:
         cmd = [binary, *(subcommand or []), flag]
@@ -33,18 +51,28 @@ def run_help(binary: str, subcommand: list[str] | None = None, timeout: int = 10
 
 
 def _looks_like_help(text: str) -> bool:
-    """Heuristic: does this text look like CLI help output?"""
+    """Check whether text looks like CLI help output.
+
+    Uses a heuristic: the text must contain at least one common
+    help-output indicator such as ``usage:``, ``options:``, or
+    indented flag patterns.
+
+    :param text: The text to check.
+    :returns: ``True`` if the text appears to be help output.
+    :rtype: bool
+    """
     lower = text.lower()
-    # Must contain at least one help-like indicator
     indicators = ["usage:", "options:", "commands:", "flags:", "  -", "  --", "arguments:"]
     return any(ind in lower for ind in indicators)
 
 
 def parse_help_output(text: str) -> tuple[str, list[Flag], list[Argument], list[str], str]:
-    """Parse a --help output string into structured components.
+    """Parse a ``--help`` output string into structured components.
 
-    Returns:
-        (description, flags, arguments, subcommand_names, usage_line)
+    :param text: Raw help output text.
+    :returns: A tuple of ``(description, flags, arguments,
+        subcommand_names, usage_line)``.
+    :rtype: tuple[str, list[Flag], list[Argument], list[str], str]
     """
     description = _extract_description(text)
     flags = _extract_flags(text)
@@ -55,7 +83,15 @@ def parse_help_output(text: str) -> tuple[str, list[Flag], list[Argument], list[
 
 
 def _extract_description(text: str) -> str:
-    """Extract the description — typically the text before the first section header."""
+    """Extract the description from help output.
+
+    The description is typically the text appearing before the first
+    section header (``Usage:``, ``Options:``, ``Commands:``, etc.).
+
+    :param text: Raw help output text.
+    :returns: The extracted description, or an empty string.
+    :rtype: str
+    """
     lines = text.split("\n")
     desc_lines: list[str] = []
     for line in lines:
@@ -72,7 +108,12 @@ def _extract_description(text: str) -> str:
 
 
 def _extract_usage(text: str) -> str:
-    """Extract the usage line."""
+    """Extract the usage line from help output.
+
+    :param text: Raw help output text.
+    :returns: The usage string, or an empty string if not found.
+    :rtype: str
+    """
     match = re.search(r"(?i)^usage:\s*(.+?)$", text, re.MULTILINE)
     return match.group(1).strip() if match else ""
 
@@ -99,10 +140,15 @@ _SHORT_ONLY_FLAG_RE = re.compile(
 
 
 def _extract_flags(text: str) -> list[Flag]:
-    """Extract flags/options from the help text.
+    """Extract flags and options from help text.
 
-    Scans both explicit "Options:" sections and any indented flag-like lines
-    throughout the help output (to handle tools that list flags inline).
+    Scans both explicit ``Options:`` sections and any indented flag-like
+    lines throughout the output. This dual approach handles tools that
+    list flags outside a formal section (e.g. ``git`` subcommands).
+
+    :param text: Raw help output text.
+    :returns: List of discovered flags.
+    :rtype: list[Flag]
     """
     flags: list[Flag] = []
     seen_names: set[str] = set()
@@ -158,11 +204,18 @@ _SUBCOMMAND_RE = re.compile(r"^\s{2,}([\w][\w-]*)\s{2,}(.+)$")
 
 
 def _extract_subcommand_names(text: str) -> list[str]:
-    """Extract subcommand names from the help text.
+    """Extract subcommand names from help text.
 
     Handles two common formats:
-    1. Explicit section header: "Commands:" / "Available commands:" followed by indented entries
-    2. Category-based (e.g. git): category descriptions followed by indented "cmd  Description" lines
+
+    1. **Explicit section header** — ``Commands:`` / ``Available commands:``
+       followed by indented entries.
+    2. **Category-based** (e.g. ``git``) — category descriptions followed
+       by indented ``cmd  Description`` lines.
+
+    :param text: Raw help output text.
+    :returns: List of subcommand names discovered.
+    :rtype: list[str]
     """
     names: list[str] = []
     in_commands_section = False
@@ -199,7 +252,15 @@ def _extract_subcommand_names(text: str) -> list[str]:
 
 
 def _extract_arguments(text: str) -> list[Argument]:
-    """Extract positional arguments from the help text."""
+    """Extract positional arguments from help text.
+
+    Looks for ``Positional arguments:`` or ``Arguments:`` sections and
+    parses indented entries with the same pattern as subcommands.
+
+    :param text: Raw help output text.
+    :returns: List of discovered positional arguments.
+    :rtype: list[Argument]
+    """
     args: list[Argument] = []
     in_args_section = False
 
@@ -224,11 +285,24 @@ def _extract_arguments(text: str) -> list[Argument]:
     return args
 
 
-def build_command_tree(binary: str, max_depth: int = 3, _depth: int = 0, _prefix: list[str] | None = None) -> tuple[str, list[Flag], list[Command], str]:
-    """Recursively build a command tree by invoking --help on each subcommand.
+def build_command_tree(
+    binary: str,
+    max_depth: int = 3,
+    _depth: int = 0,
+    _prefix: list[str] | None = None,
+) -> tuple[str, list[Flag], list[Command], str]:
+    """Recursively build a command tree by invoking ``--help`` on each subcommand.
 
-    Returns:
-        (description, global_flags, commands, raw_help)
+    Starting from the top-level binary, this function discovers subcommands
+    and recurses into each one up to ``max_depth`` levels deep, collecting
+    flags, arguments, and nested subcommands at each level.
+
+    :param binary: The CLI binary name.
+    :param max_depth: Maximum recursion depth for subcommand discovery.
+    :param _depth: Current recursion depth (internal use).
+    :param _prefix: Current subcommand path prefix (internal use).
+    :returns: A tuple of ``(description, global_flags, commands, raw_help)``.
+    :rtype: tuple[str, list[Flag], list[Command], str]
     """
     prefix = _prefix or []
     raw = run_help(binary, prefix if prefix else None)

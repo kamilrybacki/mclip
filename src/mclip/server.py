@@ -1,10 +1,29 @@
-"""mclip MCP server — exposes CLI tools to agents via the Model Context Protocol."""
+"""mclip MCP server — exposes CLI tools to agents via the Model Context Protocol.
+
+This module is the main entry point for the mclip MCP server. It defines
+the MCP tools that agents use to register, inspect, and execute CLI tools.
+
+The server uses the **router** pattern: rather than creating one MCP tool per
+CLI command, it exposes a small set of meta-tools (``register_cli``,
+``inspect_cli``, ``run_command``, etc.) that work with any registered CLI.
+
+Usage::
+
+    # As a console script (installed via pip):
+    $ mclip
+
+    # Via the MCP CLI:
+    $ mcp run mclip
+
+    # Programmatically:
+    >>> from mclip.server import main
+    >>> main()
+"""
 
 from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
@@ -25,6 +44,14 @@ _registry: Registry | None = None
 
 
 def _get_registry() -> Registry:
+    """Get or initialize the global registry singleton.
+
+    Uses the ``MCLIP_DB_PATH`` environment variable if set, otherwise
+    falls back to the default path (``~/.mclip/registry.db``).
+
+    :returns: The shared :class:`~mclip.registry.Registry` instance.
+    :rtype: Registry
+    """
     global _registry
     if _registry is None:
         db_path = os.environ.get("MCLIP_DB_PATH")
@@ -43,15 +70,17 @@ def register_cli(
     """Register a CLI tool by introspecting its help, man pages, and shell completions.
 
     This discovers the tool's commands, subcommands, flags, and arguments,
-    building a structured schema that can be queried with inspect_cli and
-    used to validate commands run via run_command.
+    building a structured schema that can be queried with :func:`inspect_cli`
+    and used to validate commands run via :func:`run_command`.
 
-    Args:
-        binary_name: Name of the CLI binary (must be on PATH), e.g. "kubectl", "docker", "git".
-        max_depth: How many levels of subcommands to recurse into (default 2).
-        use_help: Introspect via --help (default True).
-        use_man: Introspect via man pages (default True).
-        use_completions: Introspect via shell completion scripts (default True).
+    :param binary_name: Name of the CLI binary (must be on ``PATH``),
+        e.g. ``"kubectl"``, ``"docker"``, ``"git"``.
+    :param max_depth: How many levels of subcommands to recurse into.
+    :param use_help: Whether to introspect via ``--help``.
+    :param use_man: Whether to introspect via ``man`` pages.
+    :param use_completions: Whether to introspect via shell completion scripts.
+    :returns: JSON string with registration summary or error.
+    :rtype: str
     """
     try:
         tool = introspect_cli(
@@ -82,7 +111,11 @@ def register_cli(
 
 @mcp.tool()
 def list_clis() -> str:
-    """List all registered CLI tools with their paths and registration timestamps."""
+    """List all registered CLI tools with their paths and registration timestamps.
+
+    :returns: JSON array of tool summaries, or a message if none are registered.
+    :rtype: str
+    """
     registry = _get_registry()
     tools = registry.list_tools()
     if not tools:
@@ -100,13 +133,16 @@ def inspect_cli(
     """Inspect a registered CLI tool's full command schema.
 
     Returns the structured tree of commands, flags, and arguments discovered
-    during introspection. Use command_path to drill into a specific subcommand.
+    during introspection. Use ``command_path`` to drill into a specific
+    subcommand.
 
-    Args:
-        binary_name: Name of the registered CLI tool.
-        command_path: Dot-separated path to a subcommand, e.g. "get.pods" (optional).
-        show_raw_help: Include the raw --help output in the response.
-        show_raw_man: Include the raw man page in the response.
+    :param binary_name: Name of the registered CLI tool.
+    :param command_path: Dot-separated path to a subcommand
+        (e.g. ``"get.pods"``). Empty string returns the full tool schema.
+    :param show_raw_help: Include the raw ``--help`` output in the response.
+    :param show_raw_man: Include the raw ``man`` page in the response.
+    :returns: JSON string with the command schema or error.
+    :rtype: str
     """
     registry = _get_registry()
     tool = registry.get(binary_name)
@@ -152,14 +188,17 @@ def run_command(
 ) -> str:
     """Execute a command against a registered CLI tool.
 
-    The binary must be registered via register_cli first. Arguments are validated
-    against the tool's schema to prevent shell injection.
+    The binary must be registered via :func:`register_cli` first. Arguments
+    are validated to prevent shell injection before execution.
 
-    Args:
-        binary_name: Name of the registered CLI tool.
-        args: List of arguments to pass, e.g. ["get", "pods", "-n", "default", "-o", "json"].
-        timeout: Maximum execution time in seconds (default 30).
-        stdin: Optional string to pipe to the command's stdin.
+    :param binary_name: Name of the registered CLI tool.
+    :param args: List of arguments to pass, e.g.
+        ``["get", "pods", "-n", "default", "-o", "json"]``.
+    :param timeout: Maximum execution time in seconds.
+    :param stdin: Optional string to pipe to the command's stdin.
+    :returns: JSON string with ``command``, ``exit_code``, ``stdout``,
+        and ``stderr``.
+    :rtype: str
     """
     registry = _get_registry()
     tool = registry.get(binary_name)
@@ -182,11 +221,12 @@ def refresh_cli(
     """Re-introspect an already registered CLI tool to update its schema.
 
     Useful after a tool has been upgraded or when you suspect the cached
-    schema is stale.
+    schema is stale. Equivalent to calling :func:`register_cli` again.
 
-    Args:
-        binary_name: Name of the registered CLI tool to refresh.
-        max_depth: Subcommand recursion depth (default 2).
+    :param binary_name: Name of the registered CLI tool to refresh.
+    :param max_depth: Subcommand recursion depth.
+    :returns: JSON string with updated registration summary or error.
+    :rtype: str
     """
     registry = _get_registry()
     existing = registry.get(binary_name)
@@ -200,8 +240,9 @@ def refresh_cli(
 def remove_cli(binary_name: str) -> str:
     """Remove a CLI tool from the registry.
 
-    Args:
-        binary_name: Name of the registered CLI tool to remove.
+    :param binary_name: Name of the registered CLI tool to remove.
+    :returns: JSON confirmation or error if the tool was not registered.
+    :rtype: str
     """
     registry = _get_registry()
     removed = registry.remove(binary_name)
@@ -211,7 +252,11 @@ def remove_cli(binary_name: str) -> str:
 
 
 def main() -> None:
-    """Entry point for the mclip MCP server."""
+    """Entry point for the mclip MCP server.
+
+    Starts the FastMCP server using stdio transport. This is the function
+    invoked by the ``mclip`` console script.
+    """
     mcp.run()
 
 

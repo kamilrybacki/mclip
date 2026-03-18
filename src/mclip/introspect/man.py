@@ -1,4 +1,17 @@
-"""Parser for man pages — extracts richer descriptions, examples, and environment variables."""
+"""Parser for ``man`` pages — extracts richer descriptions, options, and commands.
+
+Man pages provide more detailed descriptions and structured option
+documentation than ``--help`` output. This parser fetches the man page
+as plain text (stripping terminal formatting), splits it into named
+sections, and extracts flags and subcommands from the appropriate sections.
+
+Typical man page sections used:
+
+- **NAME** — tool name and one-line description
+- **DESCRIPTION** — detailed description
+- **OPTIONS** — flags with multi-line descriptions
+- **COMMANDS** / **SUBCOMMANDS** — available subcommands
+"""
 
 from __future__ import annotations
 
@@ -9,7 +22,16 @@ from mclip.schema import Command, Flag
 
 
 def get_man_page(tool_name: str, timeout: int = 10) -> str | None:
-    """Fetch the man page for a tool as plain text, or None if unavailable."""
+    """Fetch the man page for a tool as plain text.
+
+    Invokes ``man --pager=cat`` to get the raw man page output, then
+    strips backspace-based bold/underline terminal formatting.
+
+    :param tool_name: Name of the tool to look up.
+    :param timeout: Maximum time in seconds to wait for ``man``.
+    :returns: Plain-text man page content, or ``None`` if unavailable.
+    :rtype: str | None
+    """
     try:
         result = subprocess.run(
             ["man", "--pager=cat", tool_name],
@@ -28,7 +50,15 @@ def get_man_page(tool_name: str, timeout: int = 10) -> str | None:
 
 
 def parse_man_sections(text: str) -> dict[str, str]:
-    """Split a man page into named sections."""
+    """Split a man page into named sections.
+
+    Man page section headers are detected as ALL-CAPS lines at column 0
+    (e.g. ``NAME``, ``DESCRIPTION``, ``OPTIONS``).
+
+    :param text: Plain-text man page content.
+    :returns: Mapping of section name to section body text.
+    :rtype: dict[str, str]
+    """
     sections: dict[str, str] = {}
     current_section: str | None = None
     current_lines: list[str] = []
@@ -50,7 +80,15 @@ def parse_man_sections(text: str) -> dict[str, str]:
 
 
 def extract_description_from_man(sections: dict[str, str]) -> str:
-    """Get a description from the man page NAME or DESCRIPTION section."""
+    """Extract a description from the ``NAME`` or ``DESCRIPTION`` section.
+
+    Prefers the ``NAME`` section (format: ``tool - description``),
+    falling back to the first paragraph of ``DESCRIPTION``.
+
+    :param sections: Parsed man page sections from :func:`parse_man_sections`.
+    :returns: The extracted description, or an empty string.
+    :rtype: str
+    """
     if "NAME" in sections:
         # NAME section is typically "tool - description"
         name_text = sections["NAME"].strip()
@@ -66,17 +104,26 @@ def extract_description_from_man(sections: dict[str, str]) -> str:
 
 
 def extract_flags_from_man(sections: dict[str, str]) -> list[Flag]:
-    """Extract flags from the OPTIONS section of a man page."""
+    """Extract flags from the ``OPTIONS`` section of a man page.
+
+    Parses the typical man page format where flags are indented 3-7
+    spaces and their descriptions are indented 8+ spaces on subsequent
+    lines::
+
+        -f, --flag [value]
+                Description text that may span
+                multiple lines.
+
+    :param sections: Parsed man page sections from :func:`parse_man_sections`.
+    :returns: List of discovered flags.
+    :rtype: list[Flag]
+    """
     options_text = sections.get("OPTIONS", "")
     if not options_text:
         return []
 
     flags: list[Flag] = []
 
-    # Man page options are typically formatted as:
-    #   -f, --flag [value]
-    #       Description text that may span
-    #       multiple lines.
     flag_re = re.compile(
         r"^\s{3,7}"
         r"(?:(-\w),?\s+)?"
@@ -113,7 +160,15 @@ def extract_flags_from_man(sections: dict[str, str]) -> list[Flag]:
 
 
 def extract_subcommands_from_man(sections: dict[str, str]) -> list[Command]:
-    """Extract subcommand information from COMMANDS or SUBCOMMANDS sections."""
+    """Extract subcommands from ``COMMANDS`` or ``SUBCOMMANDS`` sections.
+
+    Looks for indented command entries with descriptions, similar to
+    the flag parsing format.
+
+    :param sections: Parsed man page sections from :func:`parse_man_sections`.
+    :returns: List of discovered subcommands.
+    :rtype: list[Command]
+    """
     for key in ("COMMANDS", "SUBCOMMANDS", "AVAILABLE COMMANDS"):
         if key in sections:
             text = sections[key]
@@ -146,9 +201,16 @@ def extract_subcommands_from_man(sections: dict[str, str]) -> list[Command]:
 def enrich_from_man(
     tool_name: str,
 ) -> tuple[str | None, str, list[Flag], list[Command]]:
-    """Fetch and parse a man page, returning (raw_text, description, flags, commands).
+    """Fetch and parse a man page for a tool.
 
-    Returns (None, "", [], []) if the man page is unavailable.
+    This is the main entry point for man page introspection. It fetches
+    the man page, parses it into sections, and extracts the description,
+    flags, and subcommands.
+
+    :param tool_name: Name of the tool to look up.
+    :returns: A tuple of ``(raw_text, description, flags, commands)``.
+        Returns ``(None, "", [], [])`` if the man page is unavailable.
+    :rtype: tuple[str | None, str, list[Flag], list[Command]]
     """
     raw = get_man_page(tool_name)
     if not raw:
