@@ -61,7 +61,6 @@ class Registry:
         ``updated_at`` timestamp are replaced.
 
         :param tool: The introspected CLI tool to store.
-        :type tool: CLITool
         """
         now = datetime.now(timezone.utc).isoformat()
         self._conn.execute(
@@ -81,7 +80,6 @@ class Registry:
         """Retrieve a registered CLI tool by name.
 
         :param name: Binary name of the tool (e.g. ``'git'``).
-        :type name: str
         :returns: The stored :class:`~mclip.schema.CLITool`, or ``None``
             if not registered.
         :rtype: CLITool | None
@@ -117,7 +115,6 @@ class Registry:
         """Remove a CLI tool from the registry.
 
         :param name: Binary name of the tool to remove.
-        :type name: str
         :returns: ``True`` if the tool was found and removed, ``False`` otherwise.
         :rtype: bool
         """
