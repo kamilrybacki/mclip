@@ -12,7 +12,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from mclip.schema import CLITool
+from mclip.schema import CLITool, Policy
 
 DEFAULT_DB_PATH = Path.home() / ".mclip" / "registry.db"
 """Default path to the SQLite registry database."""
@@ -42,7 +42,7 @@ class Registry:
         self._init_schema()
 
     def _init_schema(self) -> None:
-        """Create the ``cli_tools`` table if it does not already exist."""
+        """Create the ``cli_tools`` and ``policies`` tables if they do not already exist."""
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS cli_tools (
                 name TEXT PRIMARY KEY,
@@ -50,6 +50,15 @@ class Registry:
                 schema_json TEXT NOT NULL,
                 registered_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            )
+        """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS policies (
+                cli_name TEXT PRIMARY KEY,
+                policy_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (cli_name) REFERENCES cli_tools(name) ON DELETE CASCADE
             )
         """)
         self._conn.commit()
@@ -119,6 +128,57 @@ class Registry:
         :rtype: bool
         """
         cursor = self._conn.execute("DELETE FROM cli_tools WHERE name = ?", (name,))
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # Policy persistence
+    # ------------------------------------------------------------------
+
+    def set_policy(self, policy: Policy) -> None:
+        """Create or replace the policy for a CLI tool.
+
+        :param policy: The policy to store. Its ``cli_name`` must match
+            a registered tool.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO policies (cli_name, policy_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(cli_name) DO UPDATE SET
+                policy_json = excluded.policy_json,
+                updated_at = excluded.updated_at
+            """,
+            (policy.cli_name, policy.model_dump_json(), now, now),
+        )
+        self._conn.commit()
+
+    def get_policy(self, cli_name: str) -> Policy | None:
+        """Retrieve the policy for a CLI tool.
+
+        :param cli_name: Binary name of the tool.
+        :returns: The stored :class:`~mclip.schema.Policy`, or ``None``
+            if no policy is set.
+        :rtype: Policy | None
+        """
+        row = self._conn.execute(
+            "SELECT policy_json FROM policies WHERE cli_name = ?", (cli_name,)
+        ).fetchone()
+        if not row:
+            return None
+        return Policy.model_validate_json(row["policy_json"])
+
+    def remove_policy(self, cli_name: str) -> bool:
+        """Remove the policy for a CLI tool.
+
+        :param cli_name: Binary name of the tool.
+        :returns: ``True`` if a policy was found and removed, ``False`` otherwise.
+        :rtype: bool
+        """
+        cursor = self._conn.execute(
+            "DELETE FROM policies WHERE cli_name = ?", (cli_name,)
+        )
         self._conn.commit()
         return cursor.rowcount > 0
 

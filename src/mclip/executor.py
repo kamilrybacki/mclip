@@ -2,8 +2,9 @@
 
 Provides safe command execution for registered CLI tools. All arguments are
 validated against a blocklist of dangerous shell characters before execution
-to prevent injection attacks. Commands are run as subprocesses with configurable
-timeouts.
+to prevent injection attacks. When a :class:`~mclip.schema.Policy` is
+supplied, deterministic rules are enforced before the subprocess is spawned.
+Commands are run as subprocesses with configurable timeouts.
 """
 
 from __future__ import annotations
@@ -12,7 +13,8 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 
-from mclip.schema import CLITool
+from mclip.policy import PolicyVerdict, check_policy
+from mclip.schema import CLITool, Policy
 
 
 @dataclass
@@ -82,23 +84,39 @@ def execute(
     args: list[str],
     timeout: int = 30,
     stdin: str | None = None,
+    policy: Policy | None = None,
 ) -> ExecutionResult:
     """Execute a command against a registered CLI tool.
 
-    Validates arguments via :func:`validate_command`, then spawns the
-    process with captured stdout/stderr. The subprocess is invoked
-    directly (no shell) for security.
+    Validates arguments via :func:`validate_command`, then — if a policy is
+    supplied — evaluates deterministic rules via :func:`~mclip.policy.check_policy`.
+    Finally spawns the process with captured stdout/stderr. The subprocess is
+    invoked directly (no shell) for security.
+
+    When an abstract (advisory) policy applies, the advisory messages are
+    appended to the result's ``stderr`` so the agent sees them alongside
+    the command output.
 
     :param tool: The registered CLI tool to invoke.
     :param args: Arguments to pass (subcommands, flags, positional args).
     :param timeout: Maximum execution time in seconds.
     :param stdin: Optional string to pipe to the command's stdin.
+    :param policy: Optional execution policy to enforce.
     :returns: The execution result with captured output.
     :rtype: ExecutionResult
-    :raises ExecutionError: If argument validation fails.
+    :raises ExecutionError: If argument validation or policy enforcement fails.
     """
     cmd = validate_command(tool, args)
     cmd_str = shlex.join(cmd)
+
+    # --- Policy enforcement ---
+    verdict: PolicyVerdict | None = None
+    if policy:
+        verdict = check_policy(policy, args)
+        if not verdict.allowed:
+            raise ExecutionError(
+                "Policy violation: " + "; ".join(verdict.denied_reasons)
+            )
 
     try:
         result = subprocess.run(
@@ -109,11 +127,18 @@ def execute(
             stdin=subprocess.PIPE if stdin else subprocess.DEVNULL,
             input=stdin,
         )
+        stderr = result.stderr
+        if verdict and verdict.advisory:
+            advisory_block = "\n[mclip policy advisory]\n" + "\n".join(
+                f"  - {a}" for a in verdict.advisory
+            )
+            stderr = stderr + advisory_block if stderr else advisory_block
+
         return ExecutionResult(
             command=cmd_str,
             exit_code=result.returncode,
             stdout=result.stdout,
-            stderr=result.stderr,
+            stderr=stderr,
         )
     except subprocess.TimeoutExpired:
         return ExecutionResult(

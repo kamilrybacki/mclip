@@ -30,13 +30,17 @@ from mcp.server.fastmcp import FastMCP
 from mclip.executor import ExecutionError, execute
 from mclip.introspect import introspect_cli
 from mclip.registry import Registry
+from mclip.schema import AbstractRule, DeterministicRule, DeterministicRuleKind, Policy
 
 mcp = FastMCP(
     "mclip",
     instructions=(
         "mclip consolidates CLI tools into MCP. Use `register_cli` to add a tool, "
         "`inspect_cli` to explore its capabilities, and `run_command` to execute commands. "
-        "All registered tools persist across sessions."
+        "Use `set_policy` to define execution rules — deterministic rules block specific "
+        "commands/flags/patterns, abstract rules provide advisory guidelines. "
+        "Policies are enforced automatically on `run_command`. "
+        "All registered tools and policies persist across sessions."
     ),
 )
 
@@ -176,6 +180,11 @@ def inspect_cli(
         if show_raw_man:
             result["raw_man"] = tool.raw_man
 
+    # Attach policy summary so agents see constraints alongside the schema.
+    policy = registry.get_policy(binary_name)
+    if policy:
+        result["policy"] = policy.model_dump()
+
     return json.dumps(result, indent=2)
 
 
@@ -205,8 +214,10 @@ def run_command(
     if not tool:
         return json.dumps({"error": f"'{binary_name}' is not registered. Use register_cli first."})
 
+    policy = registry.get_policy(binary_name)
+
     try:
-        result = execute(tool, args, timeout=timeout, stdin=stdin)
+        result = execute(tool, args, timeout=timeout, stdin=stdin, policy=policy)
     except ExecutionError as exc:
         return json.dumps({"error": str(exc)})
 
@@ -249,6 +260,107 @@ def remove_cli(binary_name: str) -> str:
     if removed:
         return json.dumps({"status": "removed", "name": binary_name})
     return json.dumps({"error": f"'{binary_name}' is not registered."})
+
+
+@mcp.tool()
+def set_policy(
+    binary_name: str,
+    deterministic_rules: list[dict] | None = None,
+    abstract_rules: list[str] | None = None,
+) -> str:
+    """Set or replace the execution policy for a registered CLI tool.
+
+    Policies control what an agent is allowed to do with a tool. Two kinds
+    of rules are supported:
+
+    **Deterministic rules** are enforced at execution time and will block
+    the command if matched. Each rule is a dict with:
+
+    - ``kind``: one of ``"deny_command"``, ``"deny_flag"``, ``"deny_pattern"``.
+    - ``target``: the value to match — a dot-separated command path for
+      ``deny_command`` (e.g. ``"push"``, ``"remote.add"``), a flag name for
+      ``deny_flag`` (e.g. ``"--force"``), or a regex for ``deny_pattern``.
+    - ``description`` (optional): why this rule exists.
+
+    **Abstract rules** are natural-language guidelines surfaced to the agent
+    but not enforced programmatically. Each rule is a plain string, e.g.
+    ``"Do not modify remote storage via this tool."``.
+
+    :param binary_name: Name of the registered CLI tool.
+    :param deterministic_rules: List of deterministic rule dicts.
+    :param abstract_rules: List of natural-language advisory strings.
+    :returns: JSON string with the stored policy summary or error.
+    :rtype: str
+    """
+    registry = _get_registry()
+    tool = registry.get(binary_name)
+    if not tool:
+        return json.dumps({"error": f"'{binary_name}' is not registered. Use register_cli first."})
+
+    det_rules: list[DeterministicRule] = []
+    for r in (deterministic_rules or []):
+        try:
+            det_rules.append(DeterministicRule(
+                kind=DeterministicRuleKind(r["kind"]),
+                target=r["target"],
+                description=r.get("description", ""),
+            ))
+        except (KeyError, ValueError) as exc:
+            return json.dumps({"error": f"Invalid deterministic rule {r!r}: {exc}"})
+
+    abs_rules = [AbstractRule(description=s) for s in (abstract_rules or [])]
+
+    policy = Policy(
+        cli_name=binary_name,
+        deterministic_rules=det_rules,
+        abstract_rules=abs_rules,
+    )
+    registry.set_policy(policy)
+
+    return json.dumps({
+        "status": "policy_set",
+        "cli_name": binary_name,
+        "deterministic_rules": len(det_rules),
+        "abstract_rules": len(abs_rules),
+    }, indent=2)
+
+
+@mcp.tool()
+def get_policy(binary_name: str) -> str:
+    """Retrieve the current execution policy for a registered CLI tool.
+
+    Returns the full policy including all deterministic and abstract rules,
+    or a message indicating no policy is set.
+
+    :param binary_name: Name of the registered CLI tool.
+    :returns: JSON string with the policy or an informational message.
+    :rtype: str
+    """
+    registry = _get_registry()
+    tool = registry.get(binary_name)
+    if not tool:
+        return json.dumps({"error": f"'{binary_name}' is not registered. Use register_cli first."})
+
+    policy = registry.get_policy(binary_name)
+    if not policy:
+        return json.dumps({"message": f"No policy set for '{binary_name}'. All operations are allowed."})
+
+    return json.dumps(policy.model_dump(), indent=2)
+
+
+@mcp.tool()
+def remove_policy(binary_name: str) -> str:
+    """Remove the execution policy for a CLI tool, allowing unrestricted access.
+
+    :param binary_name: Name of the registered CLI tool.
+    :returns: JSON confirmation or error if no policy was set.
+    :rtype: str
+    """
+    registry = _get_registry()
+    removed = registry.remove_policy(binary_name)
+    if removed:
+        return json.dumps({"status": "policy_removed", "cli_name": binary_name})
+    return json.dumps({"error": f"No policy set for '{binary_name}'."})
 
 
 def main() -> None:

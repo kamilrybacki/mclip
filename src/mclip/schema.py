@@ -1,4 +1,4 @@
-"""Schema models for CLI tool introspection results.
+"""Schema models for CLI tool introspection results and execution policies.
 
 Defines the Pydantic data models that represent a CLI tool's structure
 after introspection. The hierarchy is::
@@ -10,10 +10,18 @@ after introspection. The hierarchy is::
         ├── arguments: list[Argument]
         └── subcommands: list[Command]
 
+Policy models control what agents are allowed to do with registered tools::
+
+    Policy
+    ├── deterministic_rules: list[DeterministicRule]   # enforced at execution
+    └── abstract_rules: list[AbstractRule]             # advisory, surfaced to agent
+
 All models serialize cleanly to JSON for MCP transport and SQLite storage.
 """
 
 from __future__ import annotations
+
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
@@ -116,3 +124,83 @@ class CLITool(BaseModel):
         default_factory=list,
         description="Which sources were used: 'help', 'man', 'completions'",
     )
+
+
+# ---------------------------------------------------------------------------
+# Policy models
+# ---------------------------------------------------------------------------
+
+
+class DeterministicRuleKind(str, Enum):
+    """The type of deterministic policy rule.
+
+    Each kind matches against a different aspect of a command invocation:
+
+    - ``deny_command``: blocks a command path (e.g. ``"push"`` or ``"remote.add"``).
+    - ``deny_flag``: blocks a specific flag (e.g. ``"--force"``).
+    - ``deny_pattern``: blocks any argument matching a regex pattern.
+    """
+
+    deny_command = "deny_command"
+    deny_flag = "deny_flag"
+    deny_pattern = "deny_pattern"
+
+
+class DeterministicRule(BaseModel):
+    """A concrete, programmatically enforced policy rule.
+
+    Deterministic rules are evaluated at execution time and will **block**
+    the command if matched, returning an error to the agent.
+
+    :ivar kind: What aspect of the invocation this rule checks.
+    :ivar target: The value to match — a command path for ``deny_command``
+        (dot-separated, e.g. ``"push"`` or ``"remote.add"``), a flag name
+        for ``deny_flag`` (e.g. ``"--force"``), or a Python regex for
+        ``deny_pattern`` (matched against each argument).
+    :ivar description: Human-readable explanation of *why* this rule exists.
+    """
+
+    kind: DeterministicRuleKind = Field(description="What this rule checks")
+    target: str = Field(
+        description=(
+            "Value to match: command path for deny_command, "
+            "flag name for deny_flag, regex for deny_pattern"
+        )
+    )
+    description: str = Field(default="", description="Why this rule exists")
+
+
+class AbstractRule(BaseModel):
+    """A natural-language policy guideline surfaced to the agent.
+
+    Abstract rules are **not** enforced programmatically. They are returned
+    alongside command results and inspection data so that the agent can
+    self-regulate its behavior.
+
+    Examples:
+
+    - ``"Do not modify remote storage via this tool."``
+    - ``"Only use read-only sub-commands in production namespaces."``
+    - ``"Avoid commands that trigger billing-relevant operations."``
+
+    :ivar description: The natural-language policy statement.
+    """
+
+    description: str = Field(description="Natural-language policy statement")
+
+
+class Policy(BaseModel):
+    """Execution policy for a registered CLI tool.
+
+    A policy is a collection of deterministic and abstract rules attached
+    to a specific CLI tool. Deterministic rules are enforced automatically;
+    abstract rules are advisory.
+
+    :ivar cli_name: The binary name this policy applies to.
+    :ivar deterministic_rules: Rules enforced at execution time.
+    :ivar abstract_rules: Advisory rules surfaced to the agent.
+    """
+
+    cli_name: str = Field(description="Binary name this policy applies to")
+    deterministic_rules: list[DeterministicRule] = Field(default_factory=list)
+    abstract_rules: list[AbstractRule] = Field(default_factory=list)
