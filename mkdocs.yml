@@ -54,8 +54,10 @@ nav:
   - Getting Started: getting-started.md
   - Architecture: architecture.md
   - MCP Tools: tools.md
+  - Policies: policies.md
   - API Reference:
       - Schema: api/schema.md
+      - Policy: api/policy.md
       - Registry: api/registry.md
       - Executor: api/executor.md
       - Server: api/server.md

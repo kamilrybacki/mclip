@@ -37,4 +37,5 @@ From an agent's perspective:
 - **Three introspection sources** — `--help`, `man`, shell completions
 - **Persistent registry** — schemas survive across server restarts
 - **Safe execution** — argument validation prevents shell injection
+- **Execution policies** — deterministic rules block dangerous commands/flags, abstract rules provide advisory guardrails
 - **Router pattern** — one set of meta-tools works with any CLI, avoiding tool explosion
