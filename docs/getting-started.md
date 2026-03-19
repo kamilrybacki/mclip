@@ -85,6 +85,30 @@ refresh_cli("git")   # Re-introspect after an upgrade
 remove_cli("git")    # Remove from registry
 ```
 
+### 5. Set execution policies
+
+Control what the agent can and cannot do with a registered tool:
+
+```
+set_policy("git",
+    deterministic_rules=[
+        {"kind": "deny_command", "target": "push", "description": "No pushing to remote"},
+        {"kind": "deny_flag", "target": "--force", "description": "Force operations are prohibited"}
+    ],
+    abstract_rules=["Prefer read-only operations when possible."]
+)
+```
+
+Deterministic rules are enforced automatically — `run_command("git", ["push", "origin"])` will return an error. Abstract rules are surfaced as advisory messages in the command output.
+
+```
+get_policy("git")       # View current policy
+remove_policy("git")    # Remove all restrictions
+```
+
+!!! tip
+    See [Policies](policies.md) for comprehensive examples covering `kubectl`, `docker`, `gh`, `aws`, `terraform`, and other popular CLI tools.
+
 ## Introspection depth
 
 The `max_depth` parameter controls how many levels of subcommands are introspected:

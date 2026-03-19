@@ -8,16 +8,19 @@ mclip follows the **router pattern**: instead of creating one MCP tool per CLI c
 MCP Client (Agent)
        │ MCP protocol (stdio)
        ▼
-┌─────────────────────────────────┐
-│         mclip MCP Server        │
-│                                 │
-│  Registry ◄── Introspect Engine │
-│  (SQLite)     ├── --help parser │
-│               ├── man parser    │
-│               └── completions   │
-│                                 │
-│  Executor ──► system CLIs       │
-└─────────────────────────────────┘
+┌──────────────────────────────────────┐
+│           mclip MCP Server           │
+│                                      │
+│  Registry ◄── Introspect Engine      │
+│  (SQLite)     ├── --help parser      │
+│    │          ├── man parser         │
+│    │          └── completions        │
+│    │                                 │
+│  Policy ──► deterministic rules      │
+│    │        abstract (advisory)      │
+│    │                                 │
+│  Executor ──► system CLIs            │
+└──────────────────────────────────────┘
 ```
 
 ## Components
@@ -49,7 +52,7 @@ The merge strategy:
 
 ### Registry (`mclip.registry`)
 
-SQLite-backed persistence layer. Each tool is stored as a JSON-serialized `CLITool` in a single table:
+SQLite-backed persistence layer. Tools and policies are stored in two tables:
 
 ```sql
 CREATE TABLE cli_tools (
@@ -58,8 +61,25 @@ CREATE TABLE cli_tools (
     schema_json TEXT NOT NULL,
     registered_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
-)
+);
+
+CREATE TABLE policies (
+    cli_name TEXT PRIMARY KEY,
+    policy_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (cli_name) REFERENCES cli_tools(name) ON DELETE CASCADE
+);
 ```
+
+### Policy (`mclip.policy`)
+
+Two-tier execution policy system:
+
+- **Deterministic rules** — `deny_command`, `deny_flag`, `deny_pattern` — are evaluated by `check_policy()` before the subprocess is spawned. A match blocks execution and returns an error.
+- **Abstract rules** — natural-language advisories — are collected and appended to the command's stderr so the agent sees them alongside the output.
+
+Policy models (`DeterministicRule`, `AbstractRule`, `Policy`) are defined in `mclip.schema` and persisted alongside tool registrations in the `policies` SQLite table.
 
 ### Executor (`mclip.executor`)
 
@@ -71,7 +91,7 @@ Safe command execution:
 
 ### Server (`mclip.server`)
 
-FastMCP server exposing six tools. See [MCP Tools](tools.md) for details.
+FastMCP server exposing nine tools (six for registration/execution, three for policy management). See [MCP Tools](tools.md) for details.
 
 ## Data flow
 

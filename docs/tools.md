@@ -1,6 +1,6 @@
 # MCP Tools
 
-mclip exposes six MCP tools that agents use to register, explore, and execute CLI tools.
+mclip exposes nine MCP tools that agents use to register, explore, execute, and govern CLI tools.
 
 ## `register_cli`
 
@@ -117,5 +117,75 @@ Remove a CLI tool from the registry.
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | `binary_name` | `str` | *required* | Name of the tool to remove |
+
+**Returns:** JSON confirmation or error.
+
+---
+
+## `set_policy`
+
+Set or replace the execution policy for a registered CLI tool.
+
+Policies define what an agent is allowed to do. Two types of rules are supported:
+
+- **Deterministic rules** — enforced at execution time, block matching commands
+- **Abstract rules** — natural-language guidelines surfaced to the agent (advisory only)
+
+**Parameters:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `binary_name` | `str` | *required* | Name of the registered CLI tool |
+| `deterministic_rules` | `list[dict] \| None` | `None` | List of deterministic rule dicts (see below) |
+| `abstract_rules` | `list[str] \| None` | `None` | List of natural-language advisory strings |
+
+Each deterministic rule dict must have:
+
+| Key | Values | Description |
+|-----|--------|-------------|
+| `kind` | `"deny_command"`, `"deny_flag"`, `"deny_pattern"` | What aspect of the invocation to check |
+| `target` | `str` | Command path (dot-separated), flag name, or regex |
+| `description` | `str` *(optional)* | Why this rule exists |
+
+**Returns:** JSON with status and rule counts.
+
+**Example:**
+```json
+{
+  "status": "policy_set",
+  "cli_name": "kubectl",
+  "deterministic_rules": 3,
+  "abstract_rules": 1
+}
+```
+
+!!! tip
+    See [Policies](policies.md) for detailed real-world examples with `kubectl`, `docker`, `gh`, `aws`, `terraform`, and more.
+
+---
+
+## `get_policy`
+
+Retrieve the current execution policy for a registered CLI tool.
+
+**Parameters:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `binary_name` | `str` | *required* | Name of the registered CLI tool |
+
+**Returns:** JSON with the full policy (all rules), or a message indicating no policy is set.
+
+---
+
+## `remove_policy`
+
+Remove the execution policy for a CLI tool, restoring unrestricted access.
+
+**Parameters:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `binary_name` | `str` | *required* | Name of the registered CLI tool |
 
 **Returns:** JSON confirmation or error.
